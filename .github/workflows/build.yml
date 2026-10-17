@@ -1,0 +1,51 @@
+name: Build
+
+# Builds the x86 and x64 static libraries on every push and pull request.
+# Pushing a version tag (e.g. v1.25.2a) also publishes a GitHub release with
+# one zip file per architecture.
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install NASM and llvm-lib
+        run: sudo apt-get update && sudo apt-get install -y nasm llvm
+
+      - name: Build
+        run: ./mk_dist.sh
+
+      - name: Package
+        run: |
+          version=${GITHUB_REF_NAME#v}; version=${version//\//-} # v1.25.2a -> 1.25.2a
+          for arch in x86 x64; do
+            (cd dist/$arch && zip -9 ../../ufmod-$version-$arch.zip ufmod.lib ufmod.h)
+          done
+          ls -l *.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ufmod
+          path: '*.zip'
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Re-pushing a tag updates the zips of an existing release
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" ufmod-*.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" ufmod-*.zip --title "$GITHUB_REF_NAME" --generate-notes
+          fi
